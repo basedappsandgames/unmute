@@ -99,7 +99,7 @@ services:
               capabilities: [gpu]
 
   llm:
-    image: vllm/vllm-openai:v0.9.1
+    image: vllm/vllm-openai:v0.10.0
     command:
       [
         # NOTE: Change the LLM here if you want.
@@ -111,7 +111,7 @@ services:
         "--dtype=bfloat16",
         # NOTE: Change this based on your GPU memory.
         # A higher value can make inference faster.
-        "--gpu-memory-utilization=0.4",
+        "--gpu-memory-utilization=0.8",
       ]
     volumes:
       - ./volumes/hf-cache:/root/.cache/huggingface
