@@ -57,9 +57,11 @@ services:
           - node.role == manager
 
   frontend:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-frontend:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-frontend:latest
     build:
       context: frontend/
+      platforms:
+        - linux/amd64
     deploy:
       # Having more than one replica is useful for scaling but also to avoid downtime
       # during crashes or updates. Traffic will be load balanced between replicas.
@@ -78,10 +80,12 @@ services:
         - "traefik.http.routers.frontend.priority=10" # lowest priority
 
   backend:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-backend:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-backend:latest
     build:
       context: ./
       target: prod
+      platforms:
+        - linux/amd64
     environment:
       # Any service can be called by other services at `http://<service_name>:<port>`.
       # http://tasks.<service_name> can be called to get the ip addresses of all the replicas
@@ -127,16 +131,14 @@ services:
           memory: 1G
 
   tts:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-moshi-server:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-moshi-server:latest
     # The command is added to the ENTRYPOINT in the Dockerfile
     command: ["worker", "--config", "configs/tts-prod.toml"]
     build:
       context: services/moshi-server
-      dockerfile: private.Dockerfile
-      ssh:                          # Only needed for staging
-        - default                   # Only needed for staging
-      args:                         # Only needed for staging
-        GITHUB_ORG: $GITHUB_ORG     # Only needed for staging
+      dockerfile: public.Dockerfile
+      platforms:
+        - linux/amd64
     environment:
       # Env variables are grabbed from the environment of the Docker CLI, so the user deploying.
       # For security reasons, use a read-only Hugging Face token.
@@ -180,7 +182,7 @@ services:
                 value: 1
 
   stt:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-moshi-server:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-moshi-server:latest
     command: ["worker", "--config", "configs/stt-prod.toml"]
     environment:
       - HUGGING_FACE_HUB_TOKEN=$HUGGING_FACE_HUB_TOKEN
@@ -219,7 +221,7 @@ services:
                 value: 1
 
   voice-cloning:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-moshi-server:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-moshi-server:latest
     command: ["worker", "--config", "configs/voice-cloning.toml"]
     environment:
       - HUGGING_FACE_HUB_TOKEN=$HUGGING_FACE_HUB_TOKEN
@@ -285,11 +287,13 @@ services:
   # Monitoring
 
   prometheus:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-prometheus:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-prometheus:latest
     build:
       # The logic to grab the metrics of all services is here:
       # Notably the prometheus-port swarm label is used to know which port to scrape.
       context: services/prometheus
+      platforms:
+        - linux/amd64
     volumes:
       - prometheus-data:/prometheus
       # Prometheus asks swarm about the services to know how to scrape them.
@@ -313,13 +317,15 @@ services:
           - node.role == manager
 
   grafana:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-grafana:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-grafana:latest
     build:
       # All the dashboards are defined in the context directory. Note that there are no
       # volumes mounted here, so the dashboards are not persistent. Any changes made
       # in the UI will be lost on restart unless you add them to the build context.
       # (export option in the UI, add the json in the git repo).
       context: services/grafana
+      platforms:
+        - linux/amd64
     deploy:
       labels:
         - "traefik.enable=true"
@@ -332,7 +338,7 @@ services:
 
   # This is useful if someone wants to display dashboards without the google auth.
   grafana-with-password:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-grafana:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-grafana:latest
     deploy:
       labels:
         - "traefik.enable=true"
@@ -397,10 +403,12 @@ services:
   # It's a service that's not running anything, but it can be used to debug the swarm.
   # Notably network issues.
   debugger:
-    image: rg.fr-par.scw.cloud/namespace-unruffled-tereshkova/${DOMAIN}-debugger:latest
+    image: ${SCALEWAY_REGISTRY}/${DOMAIN}-debugger:latest
     command: ["sleep", "infinity"]
     build:
       context: services/debugger
+      platforms:
+        - linux/amd64
     volumes:
       - /tmp:/tmp
 
