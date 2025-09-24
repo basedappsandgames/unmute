@@ -1,7 +1,7 @@
 FROM ghcr.io/astral-sh/uv:0.6.17-debian AS build
 WORKDIR /app
 
-ENV UV_COMPILE_BYTECODE=1 UV_LOCKED=1
+ENV UV_COMPILE_BYTECODE=0 UV_LOCKED=1
 
 RUN --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
