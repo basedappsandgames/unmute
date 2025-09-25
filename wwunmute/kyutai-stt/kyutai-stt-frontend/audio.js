@@ -93,16 +93,92 @@ const initApp = () => {
         const tag = view[0];
         const payload = arrayBuffer.slice(1);
 
+        // Pretty logging for transcription data
+        const transcriptionData = {
+            timestamp: new Date().toISOString(),
+            rawData: {
+                arrayBufferSize: arrayBuffer.byteLength,
+                tag: tag,
+                tagHex: `0x${tag.toString(16).padStart(2, '0')}`,
+                payloadSize: payload.byteLength,
+                payloadBytes: Array.from(new Uint8Array(payload)).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ')
+            }
+        };
+
         if (tag === 1) {
             // text data
             const decoder = new TextDecoder();
             const text = decoder.decode(payload);
+            
+            // Add text information to the data structure
+            transcriptionData.textData = {
+                decodedText: text,
+                textLength: text.length,
+                isWhitespace: text.trim() === '',
+                isPunctuation: /[.!?]/.test(text)
+            };
+            
+            // Add sentence state information
+            transcriptionData.sentenceState = {
+                beforeUpdate: {
+                    pendingSentence: pendingSentence,
+                    pendingLength: pendingSentence.length,
+                    completedCount: completedSentences.length
+                }
+            };
+            
             pendingSentence += text;
+            
+            transcriptionData.sentenceState.afterUpdate = {
+                pendingSentence: pendingSentence,
+                pendingLength: pendingSentence.length,
+                willComplete: pendingSentence.endsWith('.') || pendingSentence.endsWith('!') || pendingSentence.endsWith('?')
+            };
+        } else {
+            transcriptionData.unknownTag = {
+                message: `Received unknown tag: ${tag}`,
+                payloadPreview: Array.from(new Uint8Array(payload.slice(0, 10))).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ')
+            };
         }
 
-        if (pendingSentence.endsWith('.') || pendingSentence.endsWith('!') || pendingSentence.endsWith('?')) {
-            completedSentences.push(pendingSentence);
-            pendingSentence = '';
+        // Pretty console logging with styling
+        console.group(`🎤 Transcription Data - ${transcriptionData.timestamp}`);
+        console.log('📊 Raw Data:', transcriptionData.rawData);
+        
+        if (transcriptionData.textData) {
+            console.log('📝 Text Data:', transcriptionData.textData);
+            console.log('📋 Sentence State:', transcriptionData.sentenceState);
+            
+            // Color-coded text display
+            const textDisplay = transcriptionData.textData.decodedText === ' ' ? 
+                `"${transcriptionData.textData.decodedText}" (space)` : 
+                `"${transcriptionData.textData.decodedText}"`;
+            
+            if (transcriptionData.textData.isPunctuation) {
+                console.log(`🔴 New Token: ${textDisplay} (punctuation - sentence may complete)`);
+            } else if (transcriptionData.textData.isWhitespace) {
+                console.log(`⚪ New Token: ${textDisplay} (whitespace)`);
+            } else {
+                console.log(`🟢 New Token: ${textDisplay} (word fragment)`);
+            }
+        }
+        
+        if (transcriptionData.unknownTag) {
+            console.warn('⚠️ Unknown Tag:', transcriptionData.unknownTag);
+        }
+        
+        console.groupEnd();
+
+        if (tag === 1) {
+            // text data processing (existing logic)
+            if (pendingSentence.endsWith('.') || pendingSentence.endsWith('!') || pendingSentence.endsWith('?')) {
+                completedSentences.push(pendingSentence);
+                
+                // Log completed sentence
+                console.log(`✅ Sentence Completed: "${pendingSentence}"`);
+                
+                pendingSentence = '';
+            }
         }
 
         updateTextOutput();

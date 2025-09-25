@@ -12,7 +12,7 @@ app = modal.App(name="kyutai-stt")
 stt_image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
-        "moshi==0.2.9", "fastapi==0.116.1", "hf_transfer==0.1.9", "julius==0.2.7"
+        "moshi==0.2.11", "fastapi==0.116.1", "hf_transfer==0.1.9", "julius==0.2.7"
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
