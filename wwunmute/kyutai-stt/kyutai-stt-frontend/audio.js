@@ -4,6 +4,8 @@ let socket = null;
 let warmupComplete = false;
 let completedSentences = [];
 let pendingSentence = '';
+let vadMessageCount = 0;
+let textMessageCount = 0;
 
 const getBaseURL = () => {
     const currentURL = new URL(window.location.href);
@@ -107,9 +109,10 @@ const initApp = () => {
 
         if (tag === 1) {
             // text data
+            textMessageCount++;
             const decoder = new TextDecoder();
             const text = decoder.decode(payload);
-            
+
             // Add text information to the data structure
             transcriptionData.textData = {
                 decodedText: text,
@@ -117,7 +120,7 @@ const initApp = () => {
                 isWhitespace: text.trim() === '',
                 isPunctuation: /[.!?]/.test(text)
             };
-            
+
             // Add sentence state information
             transcriptionData.sentenceState = {
                 beforeUpdate: {
@@ -126,14 +129,36 @@ const initApp = () => {
                     completedCount: completedSentences.length
                 }
             };
-            
+
             pendingSentence += text;
-            
+
             transcriptionData.sentenceState.afterUpdate = {
                 pendingSentence: pendingSentence,
                 pendingLength: pendingSentence.length,
                 willComplete: pendingSentence.endsWith('.') || pendingSentence.endsWith('!') || pendingSentence.endsWith('?')
             };
+        } else if (tag === 2) {
+            // VAD data
+            vadMessageCount++;
+            const decoder = new TextDecoder();
+            const vadJson = decoder.decode(payload);
+            try {
+                const vadData = JSON.parse(vadJson);
+                transcriptionData.vadData = {
+                    probability: vadData.probability,
+                    hasVadHeads: vadData.has_vad_heads,
+                    isActive: vadData.probability !== null ? vadData.probability > 0.5 : null,
+                    confidenceLevel: vadData.probability !== null ?
+                        (vadData.probability > 0.8 ? 'high' : vadData.probability > 0.5 ? 'medium' : 'low') :
+                        'unknown',
+                    rawJson: vadJson
+                };
+            } catch (e) {
+                transcriptionData.vadData = {
+                    error: `Failed to parse VAD JSON: ${e.message}`,
+                    rawJson: vadJson
+                };
+            }
         } else {
             transcriptionData.unknownTag = {
                 message: `Received unknown tag: ${tag}`,
@@ -144,16 +169,17 @@ const initApp = () => {
         // Pretty console logging with styling
         console.group(`🎤 Transcription Data - ${transcriptionData.timestamp}`);
         console.log('📊 Raw Data:', transcriptionData.rawData);
-        
+        console.log(`📈 Message Counts: Text=${textMessageCount}, VAD=${vadMessageCount}`);
+
         if (transcriptionData.textData) {
             console.log('📝 Text Data:', transcriptionData.textData);
             console.log('📋 Sentence State:', transcriptionData.sentenceState);
-            
+
             // Color-coded text display
-            const textDisplay = transcriptionData.textData.decodedText === ' ' ? 
-                `"${transcriptionData.textData.decodedText}" (space)` : 
+            const textDisplay = transcriptionData.textData.decodedText === ' ' ?
+                `"${transcriptionData.textData.decodedText}" (space)` :
                 `"${transcriptionData.textData.decodedText}"`;
-            
+
             if (transcriptionData.textData.isPunctuation) {
                 console.log(`🔴 New Token: ${textDisplay} (punctuation - sentence may complete)`);
             } else if (transcriptionData.textData.isWhitespace) {
@@ -162,11 +188,41 @@ const initApp = () => {
                 console.log(`🟢 New Token: ${textDisplay} (word fragment)`);
             }
         }
-        
+
+        if (transcriptionData.vadData) {
+            console.log('🎯 VAD Data:', transcriptionData.vadData);
+
+            if (transcriptionData.vadData.error) {
+                console.error(`❌ VAD Error: ${transcriptionData.vadData.error}`);
+            } else if (!transcriptionData.vadData.hasVadHeads) {
+                console.warn(`⚠️ VAD: No VAD heads available from model`);
+            } else if (transcriptionData.vadData.probability === null) {
+                console.warn(`⚠️ VAD: Null probability received`);
+            } else {
+                // Color-coded VAD display
+                const vadProbability = transcriptionData.vadData.probability;
+                const vadDisplay = `${(vadProbability * 100).toFixed(1)}%`;
+
+                if (transcriptionData.vadData.confidenceLevel === 'high') {
+                    console.log(`🔊 VAD: ${vadDisplay} (HIGH confidence - voice very active)`);
+                } else if (transcriptionData.vadData.confidenceLevel === 'medium') {
+                    console.log(`🔉 VAD: ${vadDisplay} (MEDIUM confidence - voice detected)`);
+                } else {
+                    console.log(`🔇 VAD: ${vadDisplay} (LOW confidence - likely silence)`);
+                }
+
+                if (transcriptionData.vadData.isActive) {
+                    console.log(`✅ Voice Activity: ACTIVE (probability > 50%)`);
+                } else {
+                    console.log(`🚫 Voice Activity: INACTIVE (probability ≤ 50%)`);
+                }
+            }
+        }
+
         if (transcriptionData.unknownTag) {
             console.warn('⚠️ Unknown Tag:', transcriptionData.unknownTag);
         }
-        
+
         console.groupEnd();
 
         if (tag === 1) {

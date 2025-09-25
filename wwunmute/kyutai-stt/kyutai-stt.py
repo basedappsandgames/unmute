@@ -139,10 +139,15 @@ class STT:
                         return
                     if vad_heads:
                         pr_vad = vad_heads[2][0, 0, 0].cpu().item()
+                        # Send VAD data to frontend
+                        yield {"type": "vad", "probability": pr_vad, "has_vad_heads": True}
                         if pr_vad > 0.5:
                             # end of turn detected
                             yield all_pcm_data
                             return
+                    else:
+                        # Send debug info when no VAD heads available
+                        yield {"type": "vad", "probability": None, "has_vad_heads": False}
 
                     assert text_tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
 
@@ -150,7 +155,7 @@ class STT:
                     if text_token not in (0, 3):
                         text = self.text_tokenizer.id_to_piece(text_token)
                         text = text.replace("▁", " ")
-                        yield text
+                        yield {"type": "text", "content": text}
 
         yield all_pcm_data
 
@@ -204,8 +209,12 @@ class STT:
 
                     pcm = opus_stream_inbound.read_pcm()
                     async for msg in self.transcribe(pcm, all_pcm_data):
-                        if isinstance(msg, str):
-                            transcription_queue.put_nowait(msg)
+                        if isinstance(msg, dict):
+                            if msg["type"] in ["text", "vad"]:
+                                transcription_queue.put_nowait(msg)
+                        elif isinstance(msg, str):
+                            # Legacy string format, convert to dict
+                            transcription_queue.put_nowait({"type": "text", "content": msg})
                         else:
                             all_pcm_data = msg
 
@@ -213,6 +222,7 @@ class STT:
                 """
                 Reads outbound data, and sends it across websocket
                 """
+                import json
                 nonlocal transcription_queue
                 while True:
                     data = await transcription_queue.get()
@@ -220,9 +230,22 @@ class STT:
                     if data is None:
                         continue
 
-                    msg = b"\x01" + bytes(
-                        data, encoding="utf8"
-                    )  # prepend "\x01" as a tag to indicate text
+                    if isinstance(data, dict):
+                        if data["type"] == "text":
+                            # Text data with tag \x01
+                            msg = b"\x01" + bytes(data["content"], encoding="utf8")
+                        elif data["type"] == "vad":
+                            # VAD data with tag \x02
+                            vad_json = json.dumps({"probability": data["probability"]})
+                            msg = b"\x02" + bytes(vad_json, encoding="utf8")
+                        else:
+                            continue
+                    elif isinstance(data, str):
+                        # Legacy string format
+                        msg = b"\x01" + bytes(data, encoding="utf8")
+                    else:
+                        continue
+
                     await ws.send_bytes(msg)
 
             # run all loops concurrently
@@ -271,7 +294,9 @@ class STT:
                 pcm = pcm.squeeze(0)
 
             async for msg in self.transcribe(pcm, all_pcm_data):
-                if isinstance(msg, str):
+                if isinstance(msg, dict) and msg["type"] == "text":
+                    await q.put.aio(msg["content"], partition="transcription")
+                elif isinstance(msg, str):
                     await q.put.aio(msg, partition="transcription")
                 else:
                     all_pcm_data = msg
