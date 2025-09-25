@@ -6,7 +6,7 @@ import modal
 
 this_directory = Path(__file__).parent.resolve()
 
-app = modal.App(name="streaming-kyutai-stt-server")
+app = modal.App(name="kyutai-stt-rust")
 
 stt_image = (
     modal.Image.from_registry(
@@ -31,7 +31,7 @@ stt_image = (
         "cargo install --features cuda moshi-server",
     ], gpu="L40S")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
-    .add_local_file(this_directory / "kyutai_server.toml", "/root/kyutai_server.toml")
+    .add_local_file(this_directory / "kyutai-stt-rust.toml", "/root/kyutai-stt-rust.toml")
 )
 
 MODEL_NAME = "kyutai/stt-1b-en_fr"
@@ -65,7 +65,7 @@ def kyutai_stt_server():
 
     subprocess.Popen(
         [
-            'moshi-server worker --config /root/kyutai_server.toml --addr 0.0.0.0 --port 8080 --log debug'
+            'moshi-server worker --config /root/kyutai-stt-rust.toml --addr 0.0.0.0 --port 8080 --log debug'
         ],
         shell=True
     )
