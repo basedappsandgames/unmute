@@ -6,6 +6,7 @@ let completedSentences = [];
 let pendingSentence = '';
 let vadMessageCount = 0;
 let textMessageCount = 0;
+let vadWarningShown = false;
 
 const getBaseURL = () => {
     const currentURL = new URL(window.location.href);
@@ -147,11 +148,15 @@ const initApp = () => {
                 transcriptionData.vadData = {
                     probability: vadData.probability,
                     hasVadHeads: vadData.has_vad_heads,
-                    isActive: vadData.probability !== null ? vadData.probability > 0.5 : null,
+                    method: vadData.method,
+                    vadAvailable: vadData.vad_available,
+                    isActive: vadData.probability !== null ? vadData.probability < 0.5 : null,
                     confidenceLevel: vadData.probability !== null ?
-                        (vadData.probability > 0.8 ? 'high' : vadData.probability > 0.5 ? 'medium' : 'low') :
+                        (vadData.probability < 0.2 ? 'high' : vadData.probability < 0.5 ? 'medium' : 'low') :
                         'unknown',
-                    rawJson: vadJson
+                    rawJson: vadJson,
+                    // Debug the raw JSON content
+                    parsedFields: Object.keys(vadData)
                 };
             } catch (e) {
                 transcriptionData.vadData = {
@@ -191,13 +196,25 @@ const initApp = () => {
 
         if (transcriptionData.vadData) {
             console.log('🎯 VAD Data:', transcriptionData.vadData);
+            console.log('🔍 Raw JSON:', transcriptionData.vadData.rawJson);
+            console.log('🔍 Parsed Fields:', transcriptionData.vadData.parsedFields);
 
             if (transcriptionData.vadData.error) {
                 console.error(`❌ VAD Error: ${transcriptionData.vadData.error}`);
+            } else if (!transcriptionData.vadData.vadAvailable) {
+                if (!vadWarningShown) {
+                    console.warn(`⚠️ VAD: Method ${transcriptionData.vadData.method} - step_with_extra_heads not available, using fallback`);
+                    console.warn(`⚠️ This warning will only show once. VAD fallback mode active.`);
+                    vadWarningShown = true;
+                }
             } else if (!transcriptionData.vadData.hasVadHeads) {
-                console.warn(`⚠️ VAD: No VAD heads available from model`);
+                if (vadMessageCount % 50 === 1) { // Only show every 50th message
+                    console.warn(`⚠️ VAD: Method ${transcriptionData.vadData.method} - No VAD heads from model (${vadMessageCount})`);
+                }
             } else if (transcriptionData.vadData.probability === null) {
-                console.warn(`⚠️ VAD: Null probability received`);
+                if (vadMessageCount % 50 === 1) { // Only show every 50th message
+                    console.warn(`⚠️ VAD: Method ${transcriptionData.vadData.method} - Null probability received (${vadMessageCount})`);
+                }
             } else {
                 // Color-coded VAD display
                 const vadProbability = transcriptionData.vadData.probability;
@@ -209,12 +226,6 @@ const initApp = () => {
                     console.log(`🔉 VAD: ${vadDisplay} (MEDIUM confidence - voice detected)`);
                 } else {
                     console.log(`🔇 VAD: ${vadDisplay} (LOW confidence - likely silence)`);
-                }
-
-                if (transcriptionData.vadData.isActive) {
-                    console.log(`✅ Voice Activity: ACTIVE (probability > 50%)`);
-                } else {
-                    console.log(`🚫 Voice Activity: INACTIVE (probability ≤ 50%)`);
                 }
             }
         }

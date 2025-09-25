@@ -17,7 +17,7 @@ stt_image = (
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
-MODEL_NAME = "kyutai/stt-1b-en_fr"
+MODEL_NAME = "kyutai/stt-1b-en_fr-candle"
 
 hf_cache_vol = modal.Volume.from_name(f"{app.name}-hf-cache", create_if_missing=True)
 hf_cache_vol_path = Path("/root/.cache/huggingface")
@@ -74,6 +74,10 @@ class STT:
             "text_padding_token_id", 3
         )
 
+        # VAD tracking for throttling
+        self.last_vad_probability = None
+        self.vad_frame_counter = 0
+
         # warmup gpus
         for _ in range(4):
             codes = self.mimi.encode(
@@ -91,6 +95,9 @@ class STT:
         # reset llm chat history for this input
         self.mimi.reset_streaming()
         self.lm_gen.reset_streaming()
+        # reset VAD tracking
+        self.last_vad_probability = None
+        self.vad_frame_counter = 0
 
     async def transcribe(self, pcm, all_pcm_data):
         import numpy as np
@@ -130,24 +137,45 @@ class STT:
 
                 # language model inference against encoded audio
                 for c in range(codes.shape[-1]):
-                    text_tokens, vad_heads = self.lm_gen.step_with_extra_heads(
-                        codes[:, :, c : c + 1]
-                    )
+                    try:
+                        # Try to get VAD heads first (requires candle model)
+                        text_tokens, vad_heads = self.lm_gen.step_with_extra_heads(
+                            codes[:, :, c : c + 1]
+                        )
+                        vad_available = True
+                    except (AttributeError, TypeError):
+                        # Fallback to regular step if VAD not available
+                        text_tokens = self.lm_gen.step(codes[:, :, c : c + 1])
+                        vad_heads = None
+                        vad_available = False
+
                     if text_tokens is None:
                         # model is silent
                         yield all_pcm_data
                         return
-                    if vad_heads:
+
+                    # VAD throttling - only send occasionally or when significant change
+                    self.vad_frame_counter += 1
+                    send_vad_update = False
+
+                    if vad_available and vad_heads:
                         pr_vad = vad_heads[2][0, 0, 0].cpu().item()
-                        # Send VAD data to frontend
-                        yield {"type": "vad", "probability": pr_vad, "has_vad_heads": True}
+
+                        # Send VAD if: first time, every 10th frame, or significant change (>0.1 difference)
+                        if (self.last_vad_probability is None or
+                            self.vad_frame_counter % 10 == 0 or
+                            abs(pr_vad - self.last_vad_probability) > 0.1):
+                            yield {"type": "vad", "probability": pr_vad, "has_vad_heads": True, "method": "step_with_extra_heads", "vad_available": True}
+                            self.last_vad_probability = pr_vad
+
                         if pr_vad > 0.5:
                             # end of turn detected
                             yield all_pcm_data
                             return
                     else:
-                        # Send debug info when no VAD heads available
-                        yield {"type": "vad", "probability": None, "has_vad_heads": False}
+                        # Send debug info when no VAD heads available (but only occasionally)
+                        if self.vad_frame_counter % 20 == 0:  # Less frequent for fallback messages
+                            yield {"type": "vad", "probability": None, "has_vad_heads": False, "method": "fallback", "vad_available": vad_available}
 
                     assert text_tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
 
@@ -236,7 +264,12 @@ class STT:
                             msg = b"\x01" + bytes(data["content"], encoding="utf8")
                         elif data["type"] == "vad":
                             # VAD data with tag \x02
-                            vad_json = json.dumps({"probability": data["probability"]})
+                            vad_json = json.dumps({
+                                "probability": data["probability"],
+                                "has_vad_heads": data.get("has_vad_heads", False),
+                                "method": data.get("method", "unknown"),
+                                "vad_available": data.get("vad_available", False)
+                            })
                             msg = b"\x02" + bytes(vad_json, encoding="utf8")
                         else:
                             continue
