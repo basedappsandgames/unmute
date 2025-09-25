@@ -280,7 +280,7 @@ web_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("python-fasthtml==0.12.20")
     .add_local_dir(
-        Path(__file__).parent.parent / "frontend" / "streaming-kyutai-stt-frontend", "/root/frontend"
+        Path(__file__).parent.parent / "kyutai-stt-frontend", "/root/frontend"
     )
 )
 
