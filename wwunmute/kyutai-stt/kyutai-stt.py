@@ -137,45 +137,37 @@ class STT:
 
                 # language model inference against encoded audio
                 for c in range(codes.shape[-1]):
+                    # Use the original working method - try VAD but don't break transcription
                     try:
-                        # Try to get VAD heads first (requires candle model)
                         text_tokens, vad_heads = self.lm_gen.step_with_extra_heads(
                             codes[:, :, c : c + 1]
                         )
-                        vad_available = True
                     except (AttributeError, TypeError):
-                        # Fallback to regular step if VAD not available
                         text_tokens = self.lm_gen.step(codes[:, :, c : c + 1])
                         vad_heads = None
-                        vad_available = False
 
                     if text_tokens is None:
                         # model is silent
                         yield all_pcm_data
                         return
 
-                    # VAD throttling - only send occasionally or when significant change
-                    self.vad_frame_counter += 1
-                    send_vad_update = False
+                    # Send VAD info for debugging (throttled)
+                    if hasattr(self, 'vad_frame_counter'):
+                        self.vad_frame_counter += 1
+                    else:
+                        self.vad_frame_counter = 1
 
-                    if vad_available and vad_heads:
+                    if vad_heads and self.vad_frame_counter % 10 == 0:
                         pr_vad = vad_heads[2][0, 0, 0].cpu().item()
+                        yield {"type": "vad", "probability": pr_vad, "has_vad_heads": True, "method": "step_with_extra_heads", "vad_available": True}
 
-                        # Send VAD if: first time, every 10th frame, or significant change (>0.1 difference)
-                        if (self.last_vad_probability is None or
-                            self.vad_frame_counter % 10 == 0 or
-                            abs(pr_vad - self.last_vad_probability) > 0.1):
-                            yield {"type": "vad", "probability": pr_vad, "has_vad_heads": True, "method": "step_with_extra_heads", "vad_available": True}
-                            self.last_vad_probability = pr_vad
-
+                    # Original VAD logic for end-of-turn detection
+                    if vad_heads:
+                        pr_vad = vad_heads[2][0, 0, 0].cpu().item()
                         if pr_vad > 0.5:
                             # end of turn detected
                             yield all_pcm_data
                             return
-                    else:
-                        # Send debug info when no VAD heads available (but only occasionally)
-                        if self.vad_frame_counter % 20 == 0:  # Less frequent for fallback messages
-                            yield {"type": "vad", "probability": None, "has_vad_heads": False, "method": "fallback", "vad_available": vad_available}
 
                     assert text_tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
 
@@ -183,7 +175,7 @@ class STT:
                     if text_token not in (0, 3):
                         text = self.text_tokenizer.id_to_piece(text_token)
                         text = text.replace("▁", " ")
-                        yield {"type": "text", "content": text}
+                        yield text
 
         yield all_pcm_data
 
@@ -238,12 +230,14 @@ class STT:
                     pcm = opus_stream_inbound.read_pcm()
                     async for msg in self.transcribe(pcm, all_pcm_data):
                         if isinstance(msg, dict):
-                            if msg["type"] in ["text", "vad"]:
+                            # VAD debug data
+                            if msg["type"] == "vad":
                                 transcription_queue.put_nowait(msg)
                         elif isinstance(msg, str):
-                            # Legacy string format, convert to dict
-                            transcription_queue.put_nowait({"type": "text", "content": msg})
+                            # Text transcription (original format)
+                            transcription_queue.put_nowait(msg)
                         else:
+                            # PCM data buffer
                             all_pcm_data = msg
 
             async def send_loop():
@@ -258,23 +252,17 @@ class STT:
                     if data is None:
                         continue
 
-                    if isinstance(data, dict):
-                        if data["type"] == "text":
-                            # Text data with tag \x01
-                            msg = b"\x01" + bytes(data["content"], encoding="utf8")
-                        elif data["type"] == "vad":
-                            # VAD data with tag \x02
-                            vad_json = json.dumps({
-                                "probability": data["probability"],
-                                "has_vad_heads": data.get("has_vad_heads", False),
-                                "method": data.get("method", "unknown"),
-                                "vad_available": data.get("vad_available", False)
-                            })
-                            msg = b"\x02" + bytes(vad_json, encoding="utf8")
-                        else:
-                            continue
+                    if isinstance(data, dict) and data["type"] == "vad":
+                        # VAD data with tag \x02
+                        vad_json = json.dumps({
+                            "probability": data["probability"],
+                            "has_vad_heads": data.get("has_vad_heads", False),
+                            "method": data.get("method", "unknown"),
+                            "vad_available": data.get("vad_available", False)
+                        })
+                        msg = b"\x02" + bytes(vad_json, encoding="utf8")
                     elif isinstance(data, str):
-                        # Legacy string format
+                        # Text data with tag \x01 (original working format)
                         msg = b"\x01" + bytes(data, encoding="utf8")
                     else:
                         continue
